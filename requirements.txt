@@ -1,0 +1,21 @@
+# CRAI backend runtime
+fastapi>=0.141,<1
+uvicorn>=0.52,<1
+SQLAlchemy>=2.0,<3
+pydantic>=2.13,<3
+pydantic-settings>=2.15,<3
+python-multipart>=0.0.20,<1
+python-dotenv>=1.2,<2
+requests>=2.34,<3
+numpy>=2.5,<3
+pandas>=2.3,<3
+scipy>=1.16,<2
+scikit-learn>=1.7,<2
+joblib>=1.5,<2
+pillow>=12,<13
+opencv-python>=4.12,<5
+torch>=2.14,<3
+torchvision>=0.29,<1
+
+# Local development / regression tests
+pytest>=8,<10

@@ -1,0 +1,24 @@
+CRAI REPAIR REPLACEMENTS
+Generated: 2026-09-20
+
+Purpose:
+Restore the two adaptive-evidence services from the inspected, syntactically valid backend snapshot.
+
+Included:
+- app/services/evidence_service.py
+- app/services/adaptive_evidence_service.py
+
+Validation performed on source snapshot:
+- Python compileall: PASS
+- pytest tests: 13 passed
+
+Important:
+This bundle intentionally does NOT replace:
+- app/api/routes.py
+- app/services/analysis_service.py
+- app/services/ai_service.py
+- model files
+- frontend files
+
+Reason:
+The uploaded backend snapshot already contains the sensor-request/re-analysis flow, and overwriting those files could remove your newer V3/UAV integration.

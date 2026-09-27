@@ -1,0 +1,3198 @@
+﻿from pathlib import Path
+import shutil
+import uuid
+import json
+from fastapi.responses import FileResponse
+from datetime import datetime
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    UploadFile,
+    File,
+    Form,
+)
+
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+
+# ============================================================
+# MODELS
+# ============================================================
+
+from app.models.observation import FieldObservation
+from app.models.farm import Farm
+from app.models.mission import Mission
+from app.models.sensor import SensorData
+from app.models.field_sensor import FieldSensorReading
+
+from app.models.sensor_request import (
+    SensorAcquisitionRequest,
+)
+
+from app.models.pending_analysis import (
+    PendingFieldAnalysis,
+)
+
+# ============================================================
+# SCHEMAS
+# ============================================================
+
+from app.schemas.farm import (
+    FarmCreate,
+    FarmResponse,
+)
+
+from app.schemas.mission import (
+    MissionCreate,
+    MissionResponse,
+    MissionStatusUpdate,
+)
+
+from app.schemas.sensor import (
+    SensorDataCreate,
+    SensorDataResponse,
+)
+
+from app.schemas.field_sensor import (
+    FieldSensorReadingCreate,
+    FieldSensorReadingResponse,
+)
+
+from app.schemas.analysis import (
+    AnalysisRequest,
+    AnalysisResponse,
+)
+
+from app.schemas.sensor_request import (
+    SensorAcquisitionRequestCreate,
+    SensorAcquisitionRequestResponse,
+)
+
+# ============================================================
+# SERVICES
+# ============================================================
+
+from app.services.ai_service import (
+    predict_image,
+    get_model_info,
+)
+
+from app.services.analysis_service import (
+    analyze_field_observation,
+)
+
+from app.services.mission_ai_service import (
+    analyze_mission_cell,
+)
+
+from app.services.observation_service import (
+    get_temporal_history,
+    get_spatial_context,
+    resolve_farm_id_from_sensor,
+    save_field_observation,
+)
+
+from app.services.adaptive_evidence_service import (
+    evaluate_adaptive_evidence,
+)
+
+from app.services.image_quality_service import (
+    assess_image_quality,
+)
+
+from app.services.sensor_acquisition_service import (
+    create_sensor_acquisition_request,
+    save_pending_analysis,
+    get_pending_sensor_requests,
+    claim_sensor_request,
+    fulfill_sensor_request,
+    validate_sensor_reading,
+)
+
+
+# ============================================================
+# ROUTER
+# ============================================================
+
+router = APIRouter(
+    prefix="/api",
+    tags=["CRAI"],
+)
+
+
+# ============================================================
+# FARM APIs
+# ============================================================
+
+
+@router.post(
+    "/farms",
+    response_model=FarmResponse,
+)
+def create_farm(
+    farm: FarmCreate,
+    db: Session = Depends(get_db),
+):
+    existing_farm = (
+        db.query(Farm)
+        .filter(
+            Farm.farm_code == farm.farm_code
+        )
+        .first()
+    )
+
+    if existing_farm:
+        raise HTTPException(
+            status_code=400,
+            detail="Farm code already exists",
+        )
+
+    new_farm = Farm(
+        farm_code=farm.farm_code,
+        name=farm.name,
+        crop=farm.crop,
+        area_acres=farm.area_acres,
+        latitude=farm.latitude,
+        longitude=farm.longitude,
+    )
+
+    db.add(new_farm)
+    db.commit()
+    db.refresh(new_farm)
+
+    return new_farm
+
+
+@router.get(
+    "/farms",
+    response_model=list[FarmResponse],
+)
+def get_farms(
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(Farm)
+        .all()
+    )
+
+
+@router.get(
+    "/farms/{farm_id}",
+    response_model=FarmResponse,
+)
+def get_farm(
+    farm_id: int,
+    db: Session = Depends(get_db),
+):
+    farm = (
+        db.query(Farm)
+        .filter(
+            Farm.id == farm_id
+        )
+        .first()
+    )
+
+    if not farm:
+        raise HTTPException(
+            status_code=404,
+            detail="Farm not found",
+        )
+
+    return farm
+
+
+# ============================================================
+# MISSION APIs
+# ============================================================
+
+
+@router.post(
+    "/missions",
+    response_model=MissionResponse,
+)
+def create_mission(
+    mission: MissionCreate,
+    db: Session = Depends(get_db),
+):
+    farm = (
+        db.query(Farm)
+        .filter(
+            Farm.id == mission.farm_id
+        )
+        .first()
+    )
+
+    if not farm:
+        raise HTTPException(
+            status_code=404,
+            detail="Farm not found",
+        )
+
+    existing_mission = (
+        db.query(Mission)
+        .filter(
+            Mission.mission_code
+            == mission.mission_code
+        )
+        .first()
+    )
+
+    if existing_mission:
+        raise HTTPException(
+            status_code=400,
+            detail="Mission code already exists",
+        )
+
+    new_mission = Mission(
+        mission_code=mission.mission_code,
+        farm_id=mission.farm_id,
+    )
+
+    db.add(new_mission)
+    db.commit()
+    db.refresh(new_mission)
+
+    return new_mission
+
+
+@router.get(
+    "/missions",
+    response_model=list[MissionResponse],
+)
+def get_missions(
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(Mission)
+        .all()
+    )
+
+
+# ============================================================
+# MISSION AI
+# ============================================================
+
+
+@router.post(
+    "/missions/analyze-cell",
+)
+def analyze_mission_cell_route(
+    payload: dict,
+):
+    try:
+        region = payload.get(
+            "region"
+        )
+
+        position = int(
+            payload.get(
+                "position",
+                0,
+            )
+        )
+
+        previous_observations = (
+            payload.get(
+                "previous_observations",
+                [],
+            )
+        )
+
+        if not region:
+            raise HTTPException(
+                status_code=400,
+                detail="Mission region is required.",
+            )
+
+        if not isinstance(
+            previous_observations,
+            list,
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "previous_observations "
+                    "must be a list."
+                ),
+            )
+
+        return analyze_mission_cell(
+            region=region,
+            position=position,
+            previous_observations=(
+                previous_observations
+            ),
+        )
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Mission AI analysis failed: "
+                f"{str(exc)}"
+            ),
+        )
+
+
+# ============================================================
+# GET SINGLE MISSION
+# ============================================================
+
+
+@router.get(
+    "/missions/{mission_id}",
+    response_model=MissionResponse,
+)
+def get_mission(
+    mission_id: int,
+    db: Session = Depends(get_db),
+):
+    mission = (
+        db.query(Mission)
+        .filter(
+            Mission.id == mission_id
+        )
+        .first()
+    )
+
+    if not mission:
+        raise HTTPException(
+            status_code=404,
+            detail="Mission not found",
+        )
+
+    return mission
+
+
+# ============================================================
+# UPDATE MISSION STATUS
+# ============================================================
+
+
+@router.patch(
+    "/missions/{mission_id}/status",
+    response_model=MissionResponse,
+)
+def update_mission_status(
+    mission_id: int,
+    status_update: MissionStatusUpdate,
+    db: Session = Depends(get_db),
+):
+    mission = (
+        db.query(Mission)
+        .filter(
+            Mission.id == mission_id
+        )
+        .first()
+    )
+
+    if not mission:
+        raise HTTPException(
+            status_code=404,
+            detail="Mission not found",
+        )
+
+    allowed_statuses = {
+        "PLANNED",
+        "READY",
+        "SCANNING",
+        "PAUSED",
+        "COMPLETED",
+        "CANCELLED",
+    }
+
+    status = (
+        status_update.status.upper()
+    )
+
+    if status not in allowed_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid mission status. "
+                f"Allowed values: "
+                f"{sorted(allowed_statuses)}"
+            ),
+        )
+
+    mission.status = status
+
+    if (
+        status == "SCANNING"
+        and mission.start_time is None
+    ):
+        mission.start_time = (
+            datetime.utcnow()
+        )
+
+    if status == "COMPLETED":
+        mission.end_time = (
+            datetime.utcnow()
+        )
+        mission.coverage = 100.0
+
+    db.commit()
+    db.refresh(mission)
+
+    return mission
+
+
+# ============================================================
+# FIELD SENSOR APIs
+# ============================================================
+
+
+@router.post(
+    "/field-sensors/readings",
+    response_model=FieldSensorReadingResponse,
+)
+def create_field_sensor_reading(
+    payload: FieldSensorReadingCreate,
+    db: Session = Depends(get_db),
+):
+    """
+    Store a field sensor reading.
+
+    If CRAI has an active sensor-acquisition request
+    matching this reading, the request is fulfilled and
+    any associated pending image analysis is automatically
+    re-analyzed.
+    """
+
+    # ========================================================
+    # 1. VALIDATE SENSOR DATA
+    # ========================================================
+
+    validation = validate_sensor_reading(
+        soil_moisture=(
+            payload.soil_moisture
+        ),
+        temperature=(
+            payload.temperature
+        ),
+        humidity=(
+            payload.humidity
+        ),
+        timestamp=(
+            payload.timestamp
+        ),
+    )
+
+    if not validation["valid"]:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message":
+                    "Invalid sensor reading.",
+
+                "errors":
+                    validation["errors"],
+
+                "age_minutes":
+                    validation["age_minutes"],
+            },
+        )
+
+    # ========================================================
+    # 2. NORMALIZE ZONE
+    # ========================================================
+
+    normalized_zone = (
+        payload.zone_id.strip().upper()
+        if payload.zone_id
+        else None
+    )
+
+    # ========================================================
+    # 3. CREATE READING ID
+    # ========================================================
+
+    reading_id = (
+        "SEN-"
+        + datetime.utcnow().strftime(
+            "%Y%m%d%H%M%S"
+        )
+        + "-"
+        + uuid.uuid4().hex[:6].upper()
+    )
+
+    timestamp = (
+        payload.timestamp
+        if payload.timestamp
+        else datetime.utcnow()
+    )
+
+    # ========================================================
+    # 4. CREATE READING
+    # ========================================================
+
+    reading = FieldSensorReading(
+        reading_id=reading_id,
+
+        device_id=payload.device_id,
+
+        farm_id=payload.farm_id,
+
+        zone_id=normalized_zone,
+
+        source=payload.source,
+
+        soil_moisture=(
+            payload.soil_moisture
+        ),
+
+        temperature=(
+            payload.temperature
+        ),
+
+        humidity=(
+            payload.humidity
+        ),
+
+        timestamp=timestamp,
+    )
+
+    db.add(reading)
+    db.commit()
+    db.refresh(reading)
+
+    # ========================================================
+    # 5. FULFILL ADAPTIVE SENSOR REQUEST
+    # ========================================================
+
+    fulfillment = (
+        fulfill_sensor_request(
+            db,
+            reading=reading,
+        )
+    )
+
+    # ========================================================
+    # 6. RESPONSE
+    # ========================================================
+
+    return {
+        "reading_id":
+            reading.reading_id,
+
+        "status":
+            "accepted",
+
+        "device_id":
+            reading.device_id,
+
+        "farm_id":
+            reading.farm_id,
+
+        "zone_id":
+            reading.zone_id,
+
+        "source":
+            reading.source,
+
+        "soil_moisture":
+            reading.soil_moisture,
+
+        "temperature":
+            reading.temperature,
+
+        "humidity":
+            reading.humidity,
+
+        "timestamp":
+            reading.timestamp,
+
+        "adaptive_acquisition":
+            {
+                "request_matched":
+                    fulfillment.get(
+                        "matched",
+                        False,
+                    ),
+
+                "reanalyzed":
+                    fulfillment.get(
+                        "reanalyzed",
+                        False,
+                    ),
+
+                "request_id":
+                    (
+                        fulfillment[
+                            "request"
+                        ].request_id
+                        if fulfillment.get(
+                            "request"
+                        )
+                        else None
+                    ),
+
+                "analysis":
+                    fulfillment.get(
+                        "analysis"
+                    ),
+
+                "reason":
+                    fulfillment.get(
+                        "reason"
+                    ),
+            },
+    }
+
+
+# ============================================================
+# GET FIELD SENSOR READINGS
+# ============================================================
+
+
+@router.get(
+    "/field-sensors/readings",
+)
+def get_field_sensor_readings(
+    zone_id: str | None = None,
+    farm_id: int | None = None,
+    device_id: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Return field sensor readings.
+
+    Real filters:
+        zone_id
+        farm_id
+        device_id
+    """
+
+    query = db.query(
+        FieldSensorReading
+    )
+
+    # --------------------------------------------------------
+    # ZONE
+    # --------------------------------------------------------
+
+    if zone_id:
+        query = query.filter(
+            FieldSensorReading.zone_id
+            == zone_id.strip().upper()
+        )
+
+    # --------------------------------------------------------
+    # FARM
+    # --------------------------------------------------------
+
+    if farm_id is not None:
+        query = query.filter(
+            FieldSensorReading.farm_id
+            == farm_id
+        )
+
+    # --------------------------------------------------------
+    # DEVICE
+    # --------------------------------------------------------
+
+    if device_id:
+        query = query.filter(
+            FieldSensorReading.device_id
+            == device_id
+        )
+
+    readings = (
+        query
+        .order_by(
+            FieldSensorReading.timestamp.desc()
+        )
+        .limit(100)
+        .all()
+    )
+
+    return {
+        "value": [
+            {
+                "reading_id":
+                    item.reading_id,
+
+                "status":
+                    "stored",
+
+                "device_id":
+                    item.device_id,
+
+                "farm_id":
+                    item.farm_id,
+
+                "zone_id":
+                    item.zone_id,
+
+                "source":
+                    item.source,
+
+                "soil_moisture":
+                    item.soil_moisture,
+
+                "temperature":
+                    item.temperature,
+
+                "humidity":
+                    item.humidity,
+
+                "timestamp":
+                    item.timestamp,
+            }
+            for item in readings
+        ],
+
+        "Count":
+            len(readings),
+    }
+
+
+# ============================================================
+# ADAPTIVE SENSOR ACQUISITION APIs
+# ============================================================
+
+
+@router.post(
+    "/field-sensors/requests",
+    response_model=SensorAcquisitionRequestResponse,
+)
+def create_sensor_request(
+    payload: SensorAcquisitionRequestCreate,
+    db: Session = Depends(get_db),
+):
+    """
+    Create a CRAI request for additional sensor evidence.
+
+    Example:
+
+        CRAI detects stale environment
+                 ↓
+        create FRESH_SENSOR request
+                 ↓
+        ESP32 fulfills request
+    """
+
+    request = (
+        create_sensor_acquisition_request(
+
+            db,
+
+            farm_id=(
+                payload.farm_id
+            ),
+
+            zone_id=(
+                payload.zone_id
+            ),
+
+            device_id=(
+                payload.device_id
+            ),
+
+            requested_evidence=(
+                payload.requested_evidence
+            ),
+
+            source=(
+                payload.source
+            ),
+
+            reason=(
+                payload.reason
+            ),
+
+            priority=(
+                payload.priority
+            ),
+        )
+    )
+
+    return request
+
+
+# ============================================================
+# GET PENDING SENSOR REQUESTS
+# ============================================================
+
+
+@router.get(
+    "/field-sensors/requests/pending",
+)
+def pending_sensor_requests(
+    zone_id: str | None = None,
+    farm_id: int | None = None,
+    device_id: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """
+    ESP32 uses this endpoint to discover pending
+    adaptive sensor requests.
+    """
+
+    requests = (
+        get_pending_sensor_requests(
+
+            db,
+
+            zone_id=zone_id,
+
+            farm_id=farm_id,
+
+            device_id=device_id,
+        )
+    )
+
+    return {
+        "count":
+            len(requests),
+
+        "requests": [
+            {
+                "request_id":
+                    item.request_id,
+
+                "farm_id":
+                    item.farm_id,
+
+                "zone_id":
+                    item.zone_id,
+
+                "device_id":
+                    item.device_id,
+
+                "source":
+                    item.source,
+
+                "requested_evidence":
+                    item.requested_evidence,
+
+                "reason":
+                    item.reason,
+
+                "priority":
+                    item.priority,
+
+                "status":
+                    item.status,
+
+                "created_at":
+                    item.created_at,
+
+                "expires_at":
+                    item.expires_at,
+            }
+            for item in requests
+        ],
+    }
+
+
+# ============================================================
+# CLAIM SENSOR REQUEST
+# ============================================================
+
+
+@router.post(
+    "/field-sensors/requests/{request_id}/claim",
+)
+def claim_sensor_request_route(
+    request_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    ESP32 claims a pending request before acquisition.
+    """
+
+    request = (
+        claim_sensor_request(
+            db,
+            request_id,
+        )
+    )
+
+    if request is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Sensor request not found.",
+        )
+
+    return {
+        "request_id":
+            request.request_id,
+
+        "status":
+            request.status,
+
+        "zone_id":
+            request.zone_id,
+
+        "farm_id":
+            request.farm_id,
+
+        "device_id":
+            request.device_id,
+
+        "source":
+            request.source,
+
+        "requested_evidence":
+            request.requested_evidence,
+
+        "reason":
+            request.reason,
+
+        "priority":
+            request.priority,
+    }
+
+
+# ============================================================
+# LEGACY SENSOR APIs
+# ============================================================
+
+
+@router.post(
+    "/sensors",
+    response_model=SensorDataResponse,
+)
+def create_sensor_data(
+    sensor: SensorDataCreate,
+    db: Session = Depends(get_db),
+):
+    mission = (
+        db.query(Mission)
+        .filter(
+            Mission.id
+            == sensor.mission_id
+        )
+        .first()
+    )
+
+    if not mission:
+        raise HTTPException(
+            status_code=404,
+            detail="Mission not found",
+        )
+
+    allowed_sensor_types = {
+        "RGB",
+        "THERMAL",
+        "GPS",
+        "ENVIRONMENT",
+    }
+
+    sensor_type = (
+        sensor.sensor_type.upper()
+    )
+
+    if sensor_type not in allowed_sensor_types:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid sensor type. "
+                "Allowed values: "
+                "RGB, THERMAL, GPS, ENVIRONMENT"
+            ),
+        )
+
+    new_sensor_data = SensorData(
+        mission_id=sensor.mission_id,
+        sensor_type=sensor_type,
+        latitude=sensor.latitude,
+        longitude=sensor.longitude,
+        altitude=sensor.altitude,
+        temperature=sensor.temperature,
+        min_temperature=sensor.min_temperature,
+        max_temperature=sensor.max_temperature,
+        humidity=sensor.humidity,
+        image_path=sensor.image_path,
+        device_id=sensor.device_id,
+    )
+
+    db.add(new_sensor_data)
+    db.commit()
+    db.refresh(new_sensor_data)
+
+    return new_sensor_data
+
+
+@router.get(
+    "/sensors",
+    response_model=list[SensorDataResponse],
+)
+def get_sensor_data(
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(SensorData)
+        .order_by(
+            SensorData.timestamp.desc()
+        )
+        .all()
+    )
+
+
+@router.get(
+    "/missions/{mission_id}/sensors",
+    response_model=list[SensorDataResponse],
+)
+def get_mission_sensor_data(
+    mission_id: int,
+    db: Session = Depends(get_db),
+):
+    mission = (
+        db.query(Mission)
+        .filter(
+            Mission.id
+            == mission_id
+        )
+        .first()
+    )
+
+    if not mission:
+        raise HTTPException(
+            status_code=404,
+            detail="Mission not found",
+        )
+
+    return (
+        db.query(SensorData)
+        .filter(
+            SensorData.mission_id
+            == mission_id
+        )
+        .order_by(
+            SensorData.timestamp.desc()
+        )
+        .all()
+    )
+
+
+@router.get(
+    "/missions/{mission_id}/sensors/latest",
+    response_model=list[SensorDataResponse],
+)
+def get_latest_sensor_data(
+    mission_id: int,
+    db: Session = Depends(get_db),
+):
+    mission = (
+        db.query(Mission)
+        .filter(
+            Mission.id
+            == mission_id
+        )
+        .first()
+    )
+
+    if not mission:
+        raise HTTPException(
+            status_code=404,
+            detail="Mission not found",
+        )
+
+    latest_data = []
+
+    sensor_types = [
+        "RGB",
+        "THERMAL",
+        "GPS",
+        "ENVIRONMENT",
+    ]
+
+    for sensor_type in sensor_types:
+
+        reading = (
+            db.query(SensorData)
+            .filter(
+                SensorData.mission_id
+                == mission_id,
+
+                SensorData.sensor_type
+                == sensor_type,
+            )
+            .order_by(
+                SensorData.timestamp.desc()
+            )
+            .first()
+        )
+
+        if reading:
+            latest_data.append(
+                reading
+            )
+
+    return latest_data
+
+def publish_live_observation(image_path: Path, payload: dict):
+    """
+    Publish the latest phone observation for the judge laptop.
+
+    The existing CRAI analysis pipeline remains authoritative.
+    This only creates a browser-readable live display copy.
+    """
+
+    try:
+        LIVE_DIR.mkdir(parents=True, exist_ok=True)
+
+        # Copy the actual uploaded phone image.
+        from PIL import Image
+
+        with Image.open(image_path) as img:
+            img = img.convert("RGB")
+            img.save(
+                LIVE_IMAGE_FILE,
+                format="JPEG",
+                quality=92,
+                optimize=True,
+            )
+
+        # Save latest CRAI result.
+        with LIVE_RESULT_FILE.open(
+            "w",
+            encoding="utf-8",
+        ) as f:
+            json.dump(
+                payload,
+                f,
+                ensure_ascii=False,
+                default=str,
+                indent=2,
+            )
+
+        return True
+
+    except Exception as exc:
+        print(
+            "CRAI LIVE DISPLAY publish warning:",
+            exc,
+        )
+        return False
+# ============================================================
+# AI UPLOAD DIRECTORY
+# ============================================================
+
+
+UPLOAD_DIR = (
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "uploads"
+)
+LIVE_DIR = UPLOAD_DIR / "live"
+LIVE_DIR.mkdir(parents=True, exist_ok=True)
+
+LIVE_RESULT_FILE = LIVE_DIR / "latest.json"
+LIVE_IMAGE_FILE = LIVE_DIR / "latest.jpg"
+UPLOAD_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+
+PENDING_UPLOAD_DIR = (
+    UPLOAD_DIR
+    / "pending_analysis"
+)
+
+PENDING_UPLOAD_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+
+# ============================================================
+# AI STATUS
+# ============================================================
+
+
+@router.get(
+    "/ai/status",
+)
+def ai_status():
+    return get_model_info()
+
+
+# ============================================================
+# AI DISEASE PREDICTION
+# ============================================================
+
+
+@router.post(
+    "/ai/predict",
+)
+async def predict_disease(
+    file: UploadFile = File(...),
+):
+    if not file.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="No file provided",
+        )
+
+    allowed_extensions = {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+    }
+
+    extension = (
+        Path(file.filename)
+        .suffix
+        .lower()
+    )
+
+    if extension not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Unsupported image format. "
+                "Use JPG, JPEG, PNG or WEBP."
+            ),
+        )
+
+    filename = (
+        f"{uuid.uuid4().hex}"
+        f"{extension}"
+    )
+
+    image_path = (
+        UPLOAD_DIR / filename
+    )
+
+    try:
+
+        with image_path.open(
+            "wb"
+        ) as buffer:
+
+            shutil.copyfileobj(
+                file.file,
+                buffer,
+            )
+
+        result = predict_image(
+            image_path
+        )
+
+        result["filename"] = (
+            file.filename
+        )
+
+        return result
+
+    except Exception as exc:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "AI prediction failed: "
+                f"{str(exc)}"
+            ),
+        )
+
+    finally:
+
+        if image_path.exists():
+
+            try:
+                image_path.unlink()
+
+            except OSError:
+                pass
+# ============================================================
+# OBSERVATION HISTORY APIs
+# ============================================================
+# ============================================================
+# LIVE PHONE → LAPTOP DISPLAY
+# ============================================================
+
+@router.get(
+    "/live/latest",
+)
+def get_live_latest():
+    """
+    Return the latest observation uploaded from a phone.
+
+    This endpoint is for the judge laptop display.
+    It does not perform analysis.
+    """
+
+    if not LIVE_RESULT_FILE.exists():
+        return {
+            "available": False,
+            "message": "Waiting for a smartphone observation.",
+        }
+
+    try:
+        with LIVE_RESULT_FILE.open(
+            "r",
+            encoding="utf-8",
+        ) as f:
+            payload = json.load(f)
+
+        payload["available"] = True
+        payload["image_url"] = "/api/live/image"
+
+        return payload
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to read live observation: {exc}",
+        )
+
+
+@router.get(
+    "/live/image",
+)
+def get_live_image():
+    """
+    Return the latest actual image captured/uploaded
+    by the smartphone.
+    """
+
+    if not LIVE_IMAGE_FILE.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="No smartphone image has been received yet.",
+        )
+
+    return FileResponse(
+        LIVE_IMAGE_FILE,
+        media_type="image/jpeg",
+        filename="crai-latest-field-image.jpg",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+        },
+    )
+
+@router.get(
+    "/observations",
+)
+def get_observations(
+    farm_id: int | None = None,
+    zone_id: str | None = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+):
+    """
+    Return persisted CRAI field observations.
+
+    Used by:
+        - Overview
+        - History
+        - Reports
+        - Field intelligence
+
+    Optional filters:
+        farm_id
+        zone_id
+        limit
+    """
+
+    # --------------------------------------------------------
+    # SAFE LIMIT
+    # --------------------------------------------------------
+
+    limit = max(
+        1,
+        min(
+            limit,
+            500,
+        ),
+    )
+
+    # --------------------------------------------------------
+    # NORMALIZE ZONE
+    # --------------------------------------------------------
+
+    normalized_zone = None
+
+    if zone_id:
+        normalized_zone = (
+            zone_id.strip().upper()
+        )
+
+    # --------------------------------------------------------
+    # BUILD QUERY
+    # --------------------------------------------------------
+
+    query = (
+        db.query(
+            FieldObservation
+        )
+    )
+
+    if farm_id is not None:
+
+        query = query.filter(
+            FieldObservation.farm_id
+            == farm_id
+        )
+
+    if normalized_zone:
+
+        query = query.filter(
+            FieldObservation.zone_id
+            == normalized_zone
+        )
+
+    # --------------------------------------------------------
+    # FETCH LATEST OBSERVATIONS
+    # --------------------------------------------------------
+
+    observations = (
+        query
+        .order_by(
+            FieldObservation.observed_at.desc()
+        )
+        .limit(limit)
+        .all()
+    )
+
+    # --------------------------------------------------------
+    # SERIALIZE
+    # --------------------------------------------------------
+
+    result = []
+
+    for item in observations:
+
+        result.append(
+            {
+                "id":
+                    item.id,
+
+                "observation_id":
+                    item.observation_id,
+
+                "farm_id":
+                    item.farm_id,
+
+                "zone_id":
+                    item.zone_id,
+
+                "crop":
+                    item.crop,
+
+                "growth_stage":
+                    item.growth_stage,
+
+                "observed_at": (
+                    item.observed_at.isoformat()
+                    if item.observed_at
+                    else None
+                ),
+
+                "filename":
+                    item.filename,
+
+                "prediction":
+                    item.prediction,
+
+                "disease_confidence":
+                    item.disease_confidence,
+
+                "risk_score":
+                    item.risk_score,
+
+                "risk_level":
+                    item.risk_level,
+
+                "assessment_confidence":
+                    item.assessment_confidence,
+
+                "soil_moisture":
+                    item.soil_moisture,
+
+                "temperature":
+                    item.temperature,
+
+                "humidity":
+                    item.humidity,
+
+                "thermal_anomaly":
+                    item.thermal_anomaly,
+
+                "evidence_breakdown":
+                    item.evidence_breakdown,
+
+                "evidence_summary":
+                    item.evidence_summary,
+
+                "source":
+                    item.source,
+            }
+        )
+
+    # --------------------------------------------------------
+    # RESPONSE
+    # --------------------------------------------------------
+
+    return {
+        "observations":
+            result,
+
+        "count":
+            len(result),
+    }
+
+
+# ============================================================
+# CRAI STRUCTURED ANALYSIS
+# ============================================================
+
+# ============================================================
+# CRAI STRUCTURED ANALYSIS
+# ============================================================
+
+
+@router.post(
+    "/analysis/observe",
+    response_model=AnalysisResponse,
+)
+def analyze_observation(
+    request: AnalysisRequest,
+):
+    """
+    Direct structured CRAI analysis endpoint.
+    """
+
+    try:
+
+        sensor_data = None
+
+        if request.sensor is not None:
+
+            sensor_data = (
+                request.sensor.model_dump(
+                    exclude_none=True
+                )
+            )
+
+        spatial_data = None
+
+        if request.spatial_context is not None:
+
+            spatial_data = (
+                request.spatial_context.model_dump()
+            )
+
+        result = (
+            analyze_field_observation(
+
+                prediction=(
+                    request.prediction
+                ),
+
+                confidence=(
+                    request.confidence
+                ),
+
+                crop=(
+                    request.crop
+                ),
+
+                growth_stage=(
+                    request.growth_stage
+                ),
+
+                temperature=(
+                    request.temperature
+                ),
+
+                humidity=(
+                    request.humidity
+                ),
+
+                thermal_anomaly=(
+                    request.thermal_anomaly
+                ),
+
+                infected_neighbor_count=(
+                    request.infected_neighbor_count
+                ),
+
+                total_neighbor_count=(
+                    request.total_neighbor_count
+                ),
+
+                disease_density=(
+                    request.disease_density
+                ),
+
+                cluster_density=(
+                    request.cluster_density
+                ),
+
+                observation_count=(
+                    request.observation_count
+                ),
+
+                sensor=sensor_data,
+
+                spatial_context=(
+                    spatial_data
+                ),
+
+                history=(
+                    request.history
+                ),
+
+                second_image_available=(
+                    request.second_image_available
+                ),
+
+                thermal_available=(
+                    request.thermal_available
+                ),
+
+                image_quality=(
+                    request.image_quality
+                ),
+            )
+        )
+
+        return result
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Structured observation analysis failed: "
+                f"{str(exc)}"
+            ),
+        )
+
+
+# ============================================================
+# CRAI END-TO-END FIELD IMAGE ANALYSIS
+# ============================================================
+
+
+@router.post(
+    "/analysis/image",
+)
+async def analyze_field_image(
+    file: UploadFile = File(...),
+    zone_id: str | None = Form(None),
+    farm_id: int | None = Form(None),
+    crop: str = Form("Tomato"),
+    growth_stage: str = Form("Vegetative"),
+    advisory_language: str = Form("English"),
+    db: Session = Depends(get_db),
+):
+    """
+    CRAI end-to-end field observation.
+
+    Pipeline:
+
+        Image
+          ↓
+        Image quality
+          ↓
+        Quality gate
+          ↓
+        Disease AI
+          ↓
+        Zone sensor
+          ↓
+        Farm resolution
+          ↓
+        Temporal history
+          ↓
+        Spatial context
+          ↓
+        Adaptive evidence
+          ↓
+        Evidence fusion
+          ↓
+        Risk
+          ↓
+        Decision
+          ↓
+        If evidence missing:
+            Sensor acquisition request
+          ↓
+        Fresh ESP32 reading
+          ↓
+        Automatic re-analysis
+    """
+
+    # ========================================================
+    # 1. VALIDATE FILE
+    # ========================================================
+
+    if not file.filename:
+
+        raise HTTPException(
+            status_code=400,
+            detail="No image provided.",
+        )
+
+    allowed_extensions = {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+    }
+
+    extension = (
+        Path(file.filename)
+        .suffix
+        .lower()
+    )
+
+    if extension not in allowed_extensions:
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Unsupported image format. "
+                "Use JPG, JPEG, PNG or WEBP."
+            ),
+        )
+
+    # ========================================================
+    # 2. NORMALIZE ZONE
+    # ========================================================
+
+    normalized_zone = (
+        zone_id.strip().upper()
+        if zone_id
+        else None
+    )
+
+    # ========================================================
+    # 3. TEMP IMAGE
+    # ========================================================
+
+    temp_filename = (
+        f"{uuid.uuid4().hex}"
+        f"{extension}"
+    )
+
+    image_path = (
+        UPLOAD_DIR
+        / temp_filename
+    )
+
+    sensor_request = None
+
+    pending_analysis = None
+
+    try:
+
+        # ====================================================
+        # 4. SAVE IMAGE
+        # ====================================================
+
+        with image_path.open(
+            "wb"
+        ) as buffer:
+
+            shutil.copyfileobj(
+                file.file,
+                buffer,
+            )
+
+        # ====================================================
+        # 5. IMAGE QUALITY
+        # ====================================================
+
+        image_quality = (
+            assess_image_quality(
+                image_path
+            )
+        )
+
+        print(
+            "\n"
+            + "=" * 60
+        )
+
+        print(
+            "CRAI IMAGE QUALITY"
+        )
+
+        print(
+            "=" * 60
+        )
+
+        print(
+            "Status:",
+            image_quality.get(
+                "status"
+            ),
+        )
+
+        print(
+            "Quality score:",
+            image_quality.get(
+                "quality_score"
+            ),
+        )
+
+        print(
+            "Dimensions:",
+            (
+                image_quality.get(
+                    "width"
+                ),
+                image_quality.get(
+                    "height"
+                ),
+            ),
+        )
+
+        print(
+            "Failed checks:",
+            image_quality.get(
+                "failed_checks",
+                [],
+            ),
+        )
+
+        print(
+            "=" * 60
+        )
+
+        # ====================================================
+        # 6. HARD IMAGE QUALITY GATE
+        # ====================================================
+
+        if (
+            image_quality.get(
+                "status"
+            )
+            == "RETAKE_REQUIRED"
+        ):
+
+            return {
+
+                "status":
+                    "ADDITIONAL_EVIDENCE_REQUIRED",
+
+                "filename":
+                    file.filename,
+
+                "zone_id":
+                    normalized_zone,
+
+                "farm_id":
+                    farm_id,
+
+                "crop":
+                    crop,
+
+                "growth_stage":
+                    growth_stage,
+
+                "disease_ai":
+                    None,
+
+                "image_quality":
+                    image_quality,
+
+                "sensor":
+                    None,
+
+                "adaptive_evidence":
+                    {
+
+                        "action":
+                            "REQUEST_IMAGE",
+
+                        "adaptive_action":
+                            "RETAKE_IMAGE",
+
+                        "priority":
+                            "HIGH",
+
+                        "evidence_required":
+                            "RETAKE_IMAGE",
+
+                        "requested_evidence":
+                            [
+                                "RETAKE_IMAGE"
+                            ],
+
+                        "next_best_source":
+                            "SMARTPHONE",
+
+                        "source":
+                            "SMARTPHONE",
+
+                        "decision_ready":
+                            False,
+
+                        "visual_evidence_accepted":
+                            False,
+
+                        "evidence_gap":
+                            "IMAGE_QUALITY",
+
+                        "reason":
+                            (
+                                "Image quality is insufficient. "
+                                "Please capture a clearer image."
+                            ),
+                    },
+
+                "analysis":
+                    {
+
+                        "status":
+                            "ADDITIONAL_EVIDENCE_REQUIRED",
+
+                        "risk":
+                            None,
+
+                        "decision":
+                            {
+
+                                "ready":
+                                    False,
+
+                                "action":
+                                    "REQUEST_IMAGE",
+
+                                "title":
+                                    "Retake image",
+
+                                "priority":
+                                    "HIGH",
+
+                                "reason":
+                                    (
+                                        "The uploaded image "
+                                        "is not suitable for "
+                                        "reliable crop-health "
+                                        "analysis."
+                                    ),
+                            },
+                    },
+            }
+
+        # ====================================================
+        # 7. DISEASE AI
+        # ====================================================
+
+        disease_result = (
+            predict_image(
+                image_path
+            )
+        )
+
+        prediction = (
+            disease_result.get(
+                "prediction"
+            )
+        )
+
+        raw_confidence = (
+            disease_result.get(
+                "confidence",
+                0.0,
+            )
+        )
+
+        try:
+
+            confidence = float(
+                raw_confidence
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+
+            confidence = 0.0
+
+        # ====================================================
+        # 8. LATEST SENSOR FOR ZONE
+        # ====================================================
+
+        sensor = None
+
+        if normalized_zone:
+
+            sensor_query = (
+                db.query(
+                    FieldSensorReading
+                )
+                .filter(
+                    FieldSensorReading.zone_id
+                    == normalized_zone
+                )
+            )
+
+            # Explicit farm filter prevents cross-farm sensor leakage.
+            if farm_id is not None:
+                sensor_query = sensor_query.filter(
+                    FieldSensorReading.farm_id == farm_id
+                )
+
+            # ------------------------------------------------
+            # SOURCE-SAFE ENVIRONMENT SELECTION
+            # ------------------------------------------------
+            # Hardware-first policy:
+            #   1. Prefer the newest REAL reading for this zone.
+            #      A stale REAL reading is intentionally retained so
+            #      the adaptive gate can request fresh evidence.
+            #   2. If no REAL reading exists, allow SIMULATED data
+            #      for explicit demo/simulation mode.
+            #
+            # Never let a newer SIMULATED reading silently replace
+            # an available physical REAL reading.
+            real_reading = (
+                sensor_query
+                .filter(
+                    FieldSensorReading.source == "REAL"
+                )
+                .order_by(
+                    FieldSensorReading.timestamp.desc()
+                )
+                .first()
+            )
+
+            simulated_reading = (
+                sensor_query
+                .filter(
+                    FieldSensorReading.source == "SIMULATED"
+                )
+                .order_by(
+                    FieldSensorReading.timestamp.desc()
+                )
+                .first()
+            )
+
+            sensor_reading = (
+                real_reading
+                if real_reading is not None
+                else simulated_reading
+            )
+
+            if sensor_reading:
+
+                sensor = {
+                    "available": True,
+                    "device_id": sensor_reading.device_id,
+                    "farm_id": sensor_reading.farm_id,
+                    "soil_moisture": sensor_reading.soil_moisture,
+                    "temperature": sensor_reading.temperature,
+                    "humidity": sensor_reading.humidity,
+                    "timestamp": (
+                        sensor_reading.timestamp.isoformat()
+                        if sensor_reading.timestamp
+                        else None
+                    ),
+                    "source": sensor_reading.source,
+                    "zone_id": sensor_reading.zone_id,
+                }
+
+        # ====================================================
+        # 9. EXPLICIT NO-SENSOR STATE
+        # ====================================================
+
+        if sensor is None:
+
+            sensor = {
+
+                "available":
+                    False,
+
+                "device_id":
+                    None,
+
+                "farm_id":
+                    None,
+
+                "soil_moisture":
+                    None,
+
+                "temperature":
+                    None,
+
+                "humidity":
+                    None,
+
+                "timestamp":
+                    None,
+
+                "source":
+                    "NO_RECENT_SENSOR",
+
+                "zone_id":
+                    normalized_zone,
+            }
+
+        # ====================================================
+        # 10. FARM RESOLUTION
+        # ====================================================
+
+        resolved_farm_id = farm_id
+
+        # Explicit farm ID wins.
+
+        # ----------------------------------------------------
+        # Sensor farm fallback
+        # ----------------------------------------------------
+
+        if (
+            resolved_farm_id is None
+            and sensor
+        ):
+
+            sensor_farm_id = (
+                sensor.get(
+                    "farm_id"
+                )
+            )
+
+            if sensor_farm_id is not None:
+
+                try:
+
+                    resolved_farm_id = int(
+                        sensor_farm_id
+                    )
+
+                except (
+                    TypeError,
+                    ValueError,
+                ):
+
+                    resolved_farm_id = None
+
+        # ----------------------------------------------------
+        # Zone history fallback
+        # ----------------------------------------------------
+
+        if (
+            resolved_farm_id is None
+            and normalized_zone
+        ):
+
+            resolved_farm_id = (
+                resolve_farm_id_from_sensor(
+
+                    db,
+
+                    normalized_zone,
+                )
+            )
+
+        # ====================================================
+        # 11. TEMPORAL HISTORY
+        # ====================================================
+
+        history = (
+            get_temporal_history(
+
+                db,
+
+                zone_id=(
+                    normalized_zone
+                ),
+
+                crop=crop,
+
+                farm_id=(
+                    resolved_farm_id
+                ),
+            )
+        )
+
+        # ====================================================
+        # 12. SPATIAL CONTEXT
+        # ====================================================
+
+        spatial_context = (
+            get_spatial_context(
+
+                db,
+
+                zone_id=(
+                    normalized_zone
+                ),
+
+                farm_id=(
+                    resolved_farm_id
+                ),
+            )
+        )
+
+        # ====================================================
+        # 13. SENSOR STATUS
+        # ====================================================
+
+        sensor_available = bool(
+            sensor.get(
+                "available",
+                False,
+            )
+        )
+
+        sensor_age_minutes = None
+
+        if (
+            sensor_available
+            and sensor.get(
+                "timestamp"
+            )
+        ):
+
+            try:
+
+                sensor_timestamp = (
+                    datetime.fromisoformat(
+                        sensor[
+                            "timestamp"
+                        ]
+                    )
+                )
+
+                if (
+                    sensor_timestamp.tzinfo
+                    is not None
+                ):
+
+                    current_time = (
+                        datetime.now(
+                            sensor_timestamp.tzinfo
+                        )
+                    )
+
+                else:
+
+                    current_time = (
+                        datetime.utcnow()
+                    )
+
+                sensor_age_minutes = (
+                    (
+                        current_time
+                        - sensor_timestamp
+                    ).total_seconds()
+                    / 60.0
+                )
+
+                sensor_age_minutes = max(
+                    0.0,
+                    sensor_age_minutes,
+                )
+
+            except (
+                TypeError,
+                ValueError,
+            ):
+
+                sensor_age_minutes = None
+
+        # ====================================================
+        # 14. ADAPTIVE EVIDENCE
+        # ====================================================
+
+        adaptive_evidence = (
+            evaluate_adaptive_evidence(
+
+                visual_confidence=(
+                    confidence
+                ),
+
+                sensor_available=(
+                    sensor_available
+                ),
+
+                sensor_age_minutes=(
+                    sensor_age_minutes
+                ),
+
+                second_image_available=False,
+
+                thermal_available=False,
+
+                spatial_available=(
+                    spatial_context
+                    is not None
+                ),
+
+                temporal_available=(
+                    bool(history)
+                ),
+
+                                image_quality=(
+                    image_quality
+                ),
+            )
+        )
+
+        # ====================================================
+        # 15. CONSOLE TRACE
+        # ====================================================
+
+        print(
+            "\n"
+            + "=" * 60
+        )
+
+        print(
+            "CRAI FIELD CONTEXT"
+        )
+
+        print(
+            "=" * 60
+        )
+
+        print(
+            "Zone:",
+            normalized_zone,
+        )
+
+        print(
+            "Farm:",
+            resolved_farm_id,
+        )
+
+        print(
+            "Prediction:",
+            prediction,
+        )
+
+        print(
+            "Visual confidence:",
+            f"{confidence:.2f}",
+        )
+
+        print(
+            "Sensor available:",
+            sensor_available,
+        )
+
+        print(
+            "Sensor age:",
+            (
+                f"{sensor_age_minutes:.1f} minutes"
+                if sensor_age_minutes is not None
+                else "N/A"
+            ),
+        )
+
+        print(
+            "Temporal observations:",
+            len(
+                history or []
+            ),
+        )
+
+        print(
+            "Spatial available:",
+            spatial_context
+            is not None,
+        )
+
+        if spatial_context:
+
+            print(
+                "Observed zones:",
+                spatial_context.get(
+                    "observed_zones",
+                    [],
+                ),
+            )
+
+            print(
+                "Infected observed zones:",
+                spatial_context.get(
+                    "infected_neighbors"
+                ),
+            )
+
+            print(
+                "Observed zone count:",
+                spatial_context.get(
+                    "nearby_observations"
+                ),
+            )
+
+        print(
+            "Image quality:",
+            image_quality.get(
+                "status"
+            ),
+        )
+
+        print(
+            "Adaptive action:",
+            adaptive_evidence.get(
+                "action"
+            ),
+        )
+
+        print(
+            "Adaptive source:",
+            adaptive_evidence.get(
+                "next_best_source"
+            ),
+        )
+
+        print(
+            "Evidence required:",
+            adaptive_evidence.get(
+                "evidence_required"
+            ),
+        )
+
+        print(
+            "Decision ready:",
+            adaptive_evidence.get(
+                "decision_ready"
+            ),
+        )
+
+        print(
+            "Reason:",
+            adaptive_evidence.get(
+                "reason"
+            ),
+        )
+
+        print(
+            "=" * 60
+        )
+
+        # ====================================================
+        # 16. PREPARE SENSOR FOR ANALYSIS
+        # ====================================================
+
+        analysis_sensor = None
+
+        if sensor_available:
+
+            analysis_sensor = sensor
+
+        # ====================================================
+        # 17. SPATIAL VALUES
+        #
+        # IMPORTANT:
+        # Missing spatial evidence stays None.
+        # Observed zero remains 0.
+        # ====================================================
+
+        spatial_infected = None
+
+        spatial_total = None
+
+        if spatial_context:
+
+            spatial_infected = (
+                spatial_context.get(
+                    "infected_neighbors"
+                )
+            )
+
+            spatial_total = (
+                spatial_context.get(
+                    "nearby_observations"
+                )
+            )
+
+        # ====================================================
+        # 18. CRAI EVIDENCE + RISK ANALYSIS
+        # ====================================================
+
+        analysis = (
+            analyze_field_observation(
+
+                prediction=(
+                    prediction
+                ),
+
+                confidence=(
+                    confidence
+                ),
+
+                crop=(
+                    crop
+                ),
+
+                growth_stage=(
+                    growth_stage
+                ),
+
+                temperature=(
+                    sensor.get(
+                        "temperature"
+                    )
+                    if sensor.get(
+                        "temperature"
+                    )
+                    is not None
+                    else 0.0
+                ),
+
+                humidity=(
+                    sensor.get(
+                        "humidity"
+                    )
+                    if sensor.get(
+                        "humidity"
+                    )
+                    is not None
+                    else 0.0
+                ),
+
+                thermal_anomaly=None,
+
+                infected_neighbor_count=(
+                    spatial_infected
+                ),
+
+                total_neighbor_count=(
+                    spatial_total
+                ),
+
+                disease_density=None,
+
+                cluster_density=None,
+
+                observation_count=(
+                    max(
+                        1,
+                        len(
+                            history or []
+                        )
+                        + 1,
+                    )
+                ),
+
+                sensor=(
+                    analysis_sensor
+                ),
+
+                spatial_context=(
+                    spatial_context
+                ),
+
+                history=(
+                    history
+                ),
+
+                second_image_available=False,
+
+                thermal_available=False,
+
+                image_quality=(
+                    image_quality
+                ),
+
+                advisory_language=(
+                    advisory_language
+                ),
+            )
+        )
+
+        # ====================================================
+        # 19. ATTACH ADAPTIVE EVIDENCE
+        # ====================================================
+
+        if isinstance(
+            analysis,
+            dict,
+        ):
+
+            analysis[
+                "adaptive_evidence"
+            ] = adaptive_evidence
+
+            analysis[
+                "image_quality"
+            ] = image_quality
+
+        # ====================================================
+        # 20. CREATE SENSOR ACQUISITION REQUEST
+        # ====================================================
+
+        if (
+            isinstance(
+                analysis,
+                dict,
+            )
+
+            and analysis.get(
+                "status"
+            )
+            == "ADDITIONAL_EVIDENCE_REQUIRED"
+
+            and adaptive_evidence.get(
+                "next_best_source"
+            )
+            == "ESP32"
+        ):
+
+            requested_evidence = (
+                adaptive_evidence.get(
+                    "requested_evidence"
+                )
+            )
+
+            if (
+                isinstance(
+                    requested_evidence,
+                    list,
+                )
+                and requested_evidence
+            ):
+
+                requested_value = (
+                    requested_evidence[0]
+                )
+
+            else:
+
+                requested_value = (
+                    "FRESH_SENSOR"
+                )
+
+            sensor_request = (
+                create_sensor_acquisition_request(
+
+                    db,
+
+                    farm_id=(
+                        resolved_farm_id
+                    ),
+
+                    zone_id=(
+                        normalized_zone
+                    ),
+
+                    device_id=(
+                        sensor.get(
+                            "device_id"
+                        )
+                        if sensor
+                        else None
+                    ),
+
+                    requested_evidence=(
+                        requested_value
+                    ),
+
+                    source="ESP32",
+
+                    reason=(
+                        adaptive_evidence.get(
+                            "evidence_gap"
+                        )
+                        or
+                        adaptive_evidence.get(
+                            "reason"
+                        )
+                        or "FRESH_SENSOR_REQUIRED"
+                    ),
+
+                    priority=(
+                        adaptive_evidence.get(
+                            "priority",
+                            "MEDIUM",
+                        )
+                    ),
+                )
+            )
+
+            # =================================================
+            # 21. PERSIST IMAGE FOR RE-ANALYSIS
+            # =================================================
+
+            pending_image_path = (
+                PENDING_UPLOAD_DIR
+                / (
+                    sensor_request.request_id
+                    + extension
+                )
+            )
+
+            shutil.copy2(
+                image_path,
+                pending_image_path,
+            )
+
+            # =================================================
+            # 22. PERSIST ANALYSIS CONTEXT
+            # =================================================
+
+            pending_analysis = (
+                save_pending_analysis(
+
+                    db,
+
+                    request_id=(
+                        sensor_request.request_id
+                    ),
+
+                    farm_id=(
+                        resolved_farm_id
+                    ),
+
+                    zone_id=(
+                        normalized_zone
+                    ),
+
+                    crop=(
+                        crop
+                    ),
+
+                    growth_stage=(
+                        growth_stage
+                    ),
+
+                    filename=(
+                        file.filename
+                    ),
+
+                    image_path=(
+                        str(
+                            pending_image_path
+                        )
+                    ),
+
+                    prediction=(
+                        prediction
+                    ),
+
+                    confidence=(
+                        confidence
+                    ),
+
+                    image_quality=(
+                        image_quality
+                    ),
+
+                    evidence_gap=(
+                        adaptive_evidence.get(
+                            "evidence_gap"
+                        )
+                    ),
+
+                    reason=(
+                        adaptive_evidence.get(
+                            "reason"
+                        )
+                    ),
+                )
+            )
+
+            # =================================================
+            # 23. ATTACH REQUEST TO ANALYSIS
+            # =================================================
+
+            if isinstance(
+                analysis,
+                dict,
+            ):
+
+                analysis[
+                    "sensor_acquisition"
+                ] = {
+
+                    "request_id":
+                        sensor_request.request_id,
+
+                    "status":
+                        sensor_request.status,
+
+                    "farm_id":
+                        sensor_request.farm_id,
+
+                    "zone_id":
+                        sensor_request.zone_id,
+
+                    "device_id":
+                        sensor_request.device_id,
+
+                    "source":
+                        sensor_request.source,
+
+                    "requested_evidence":
+                        sensor_request.requested_evidence,
+
+                    "reason":
+                        sensor_request.reason,
+
+                    "priority":
+                        sensor_request.priority,
+
+                    "created_at":
+                        sensor_request.created_at,
+
+                    "expires_at":
+                        sensor_request.expires_at,
+                }
+
+        # ====================================================
+        # 24. SAVE COMPLETED OBSERVATION
+        # ====================================================
+
+        if (
+            isinstance(
+                analysis,
+                dict,
+            )
+            and analysis.get(
+                "status"
+            )
+            == "ANALYSIS_COMPLETE"
+        ):
+
+            risk = (
+                analysis.get(
+                    "risk"
+                )
+            )
+
+            save_field_observation(
+
+                db,
+
+                zone_id=(
+                    normalized_zone
+                    or "UNKNOWN"
+                ),
+
+                crop=(
+                    crop
+                ),
+
+                growth_stage=(
+                    growth_stage
+                ),
+
+                filename=(
+                    file.filename
+                ),
+
+                prediction=(
+                    prediction
+                ),
+
+                confidence=(
+                    confidence
+                ),
+
+                risk=(
+                    risk
+                ),
+
+                sensor=(
+                    analysis_sensor
+                ),
+
+                source=(
+                    "FIELD_IMAGE"
+                ),
+
+                farm_id=(
+                    resolved_farm_id
+                ),
+            )
+
+        # ====================================================
+        # 25. COMPLETE RESPONSE
+        # ====================================================
+                # ====================================================
+        # 24.5. PUBLISH TO JUDGE LAPTOP
+        # ====================================================
+
+        live_payload = {
+            "status": "OBSERVATION_ANALYZED",
+            "filename": file.filename,
+            "zone_id": normalized_zone,
+            "farm_id": resolved_farm_id,
+            "crop": crop,
+            "growth_stage": growth_stage,
+            "image_quality": image_quality,
+            "disease_ai": disease_result,
+            "sensor": sensor,
+            "adaptive_evidence": adaptive_evidence,
+            "analysis": analysis,
+        }
+
+        publish_live_observation(
+            image_path,
+            live_payload,
+        )
+        return {
+
+            "status":
+                "OBSERVATION_ANALYZED",
+
+            "filename":
+                file.filename,
+
+            "zone_id":
+                normalized_zone,
+
+            "farm_id":
+                resolved_farm_id,
+
+            "crop":
+                crop,
+
+            "growth_stage":
+                growth_stage,
+
+            "image_quality":
+                image_quality,
+
+            "disease_ai":
+                disease_result,
+
+            "sensor":
+                sensor,
+
+            "adaptive_evidence":
+                adaptive_evidence,
+
+            "sensor_acquisition":
+                (
+                    {
+                        "request_id":
+                            sensor_request.request_id,
+
+                        "status":
+                            sensor_request.status,
+
+                        "farm_id":
+                            sensor_request.farm_id,
+
+                        "zone_id":
+                            sensor_request.zone_id,
+
+                        "device_id":
+                            sensor_request.device_id,
+
+                        "source":
+                            sensor_request.source,
+
+                        "requested_evidence":
+                            sensor_request.requested_evidence,
+
+                        "reason":
+                            sensor_request.reason,
+
+                        "priority":
+                            sensor_request.priority,
+
+                        "created_at":
+                            sensor_request.created_at,
+
+                        "expires_at":
+                            sensor_request.expires_at,
+                    }
+                    if sensor_request
+                    else None
+                ),
+
+            "field_context":
+                {
+
+                    "farm_id":
+                        resolved_farm_id,
+
+                    "zone_id":
+                        normalized_zone,
+
+                    "temporal_observations":
+                        len(
+                            history or []
+                        ),
+
+                    "spatial_available":
+                        bool(
+                            spatial_context
+                            and spatial_context.get(
+                                "available",
+                                False,
+                            )
+                        ),
+
+                    "spatial_context":
+                        spatial_context,
+                },
+
+            "analysis":
+                analysis,
+        }
+
+    # ========================================================
+    # HTTP EXCEPTION
+    # ========================================================
+
+    except HTTPException:
+        raise
+
+    # ========================================================
+    # GENERAL EXCEPTION
+    # ========================================================
+
+    except Exception as exc:
+
+        db.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Field image analysis failed: "
+                f"{str(exc)}"
+            ),
+        )
+
+    # ========================================================
+    # CLEANUP TEMPORARY IMAGE
+    # ========================================================
+
+    finally:
+
+        if image_path.exists():
+
+            try:
+
+                image_path.unlink()
+
+            except OSError:
+
+                pass
+
+# ============================================================
+# CRAI UAV ANALYSIS
+# ============================================================
+
+from app.services.uav_detection_service import (
+    detect_uav,
+    get_uav_model_info,
+)
+
+
+@router.get("/analysis/uav/status")
+def uav_analysis_status():
+    """
+    Return UAV model status.
+    """
+    try:
+        return get_uav_model_info()
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"UAV model unavailable: {exc}",
+        )
+
+
+@router.post("/analysis/uav")
+async def analyze_uav_image(
+    file: UploadFile = File(...),
+):
+    """
+    Analyze an aerial/UAV image using the CRAI UAV detector.
+
+    This endpoint produces spatial evidence only.
+    It does not independently calculate CRAI field risk.
+    """
+
+    if not file.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="UAV image filename is required.",
+        )
+
+    allowed_extensions = {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+    }
+
+    extension = Path(
+        file.filename
+    ).suffix.lower()
+
+    if extension not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Unsupported UAV image format. "
+                "Use JPG, JPEG, PNG, or WEBP."
+            ),
+        )
+
+    temp_dir = (
+        Path(__file__).resolve().parents[2]
+        / "uploads"
+        / "uav"
+    )
+
+    temp_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    temp_path = (
+        temp_dir
+        / f"uav_{uuid.uuid4().hex}{extension}"
+    )
+
+    try:
+
+        with temp_path.open(
+            "wb"
+        ) as buffer:
+
+            shutil.copyfileobj(
+                file.file,
+                buffer,
+            )
+
+        result = detect_uav(
+            temp_path
+        )
+
+        return {
+            "success": True,
+            "source": "uav",
+            "filename": file.filename,
+            "evidence": result,
+        }
+
+    except Exception as exc:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "UAV image analysis failed: "
+                f"{str(exc)}"
+            ),
+        )
+
+    finally:
+
+        try:
+            if temp_path.exists():
+                temp_path.unlink()
+
+        except Exception:
+            pass
+

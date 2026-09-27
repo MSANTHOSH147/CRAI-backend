@@ -1,0 +1,470 @@
+{
+  "status": "ADDITIONAL_EVIDENCE_REQUIRED",
+  "observation_id": "OBS-PENDING-8D0D4ABA68",
+  "filename": "0bb52721-51a6-4343-8c54-de15cedf8e5c___RS_Erly.B 7572.JPG",
+  "zone_id": "A1",
+  "farm_id": 1,
+  "crop": "Tomato",
+  "growth_stage": "Vegetative",
+  "image_quality": {
+    "status": "GOOD",
+    "quality_score": 100.0,
+    "width": 256,
+    "height": 256,
+    "brightness": 125.63,
+    "contrast": 46.18,
+    "sharpness": 383.07,
+    "checks": {
+      "resolution": true,
+      "brightness": true,
+      "contrast": true,
+      "sharpness": true
+    },
+    "failed_checks": [],
+    "messages": [
+      "Image quality is suitable for visual analysis."
+    ]
+  },
+  "disease_ai": {
+    "prediction": "Tomato_Bacterial_Spot",
+    "confidence": 58.64,
+    "crop": "Tomato",
+    "disease": "Bacterial Spot",
+    "severity": "Moderate",
+    "top_predictions": [
+      {
+        "class": "Tomato_Bacterial_Spot",
+        "confidence": 58.64
+      },
+      {
+        "class": "Tomato_Leaf_Mold",
+        "confidence": 9.14
+      },
+      {
+        "class": "Tomato_Late_Blight",
+        "confidence": 7.77
+      }
+    ],
+    "model": "CRAI Tomato Specialist",
+    "model_version": "V3_PLANTDOC_ADAPTED"
+  },
+  "sensor": {
+    "available": true,
+    "device_id": "CRAI-SIM-001",
+    "reading_id": "SIM-20260927123711-0001",
+    "evidence_scope": "HISTORICAL_OR_STALE_CONTEXT",
+    "usable_for_current_decision": false,
+    "farm_id": 1,
+    "soil_moisture": 53.19,
+    "temperature": 27.52,
+    "humidity": 61.65,
+    "timestamp": "2026-09-27T12:37:11.728035",
+    "source": "SIMULATED",
+    "zone_id": "A1",
+    "age_minutes": 0.014251633333333335
+  },
+  "adaptive_evidence": {
+    "action": "REQUEST_IMAGE",
+    "adaptive_action": "SECOND_IMAGE",
+    "priority": "HIGH",
+    "evidence_required": "SECOND_IMAGE",
+    "requested_evidence": [
+      "SECOND_IMAGE"
+    ],
+    "next_best_source": "SMARTPHONE",
+    "source": "SMARTPHONE",
+    "model": "CRAI_V3",
+    "decision_ready": false,
+    "visual_evidence_accepted": false,
+    "evidence_gap": "VISUAL_UNCERTAINTY",
+    "reason": "Visual confidence is below the CRAI operating threshold. Acquire another image before making a field assessment.",
+    "cost_aware_selection": {
+      "selected": {
+        "evidence": "SECOND_IMAGE",
+        "source": "SMARTPHONE",
+        "available": true,
+        "reliability": 0.9,
+        "information_value": 0.9,
+        "decision_impact": 0.95,
+        "acquisition_cost": 0.08,
+        "acquisition_time": 0.12,
+        "model": "CRAI_V3",
+        "reason": "A second field image directly reduces visual uncertainty at very low acquisition burden.",
+        "utility": 2.635
+      },
+      "ranked_candidates": [
+        {
+          "evidence": "SECOND_IMAGE",
+          "source": "SMARTPHONE",
+          "available": true,
+          "reliability": 0.9,
+          "information_value": 0.9,
+          "decision_impact": 0.95,
+          "acquisition_cost": 0.08,
+          "acquisition_time": 0.12,
+          "model": "CRAI_V3",
+          "reason": "A second field image directly reduces visual uncertainty at very low acquisition burden.",
+          "utility": 2.635
+        }
+      ],
+      "stopping_policy": {
+        "action": "CONTINUE",
+        "reason": "Additional evidence may materially improve the decision.",
+        "stop": false
+      },
+      "policy": {
+        "utility_formula": "information_value * decision_impact * reliability / (0.20 + 0.70*cost + 0.30*time)",
+        "cost_weight": 0.7,
+        "time_weight": 0.3,
+        "stop_utility_threshold": 0.2,
+        "ready_score_threshold": 0.8,
+        "max_acquisition_actions": 3,
+        "status": "ENGINEERING_POLICY_NOT_SCIENTIFICALLY_VALIDATED"
+      }
+    },
+    "accepted": false
+  },
+  "analysis": {
+    "status": "ADDITIONAL_EVIDENCE_REQUIRED",
+    "disease": {
+      "prediction": "Tomato_Bacterial_Spot",
+      "confidence": 58.64
+    },
+    "image_quality": {
+      "status": "GOOD",
+      "quality_score": 100.0,
+      "width": 256,
+      "height": 256,
+      "brightness": 125.63,
+      "contrast": 46.18,
+      "sharpness": 383.07,
+      "checks": {
+        "resolution": true,
+        "brightness": true,
+        "contrast": true,
+        "sharpness": true
+      },
+      "failed_checks": [],
+      "messages": [
+        "Image quality is suitable for visual analysis."
+      ]
+    },
+    "evidence": {
+      "engine": "CRAI_EVIDENCE_V2",
+      "available": {
+        "visual": true,
+        "environmental": true,
+        "spatial": false,
+        "temporal": true
+      },
+      "quality": {
+        "visual": 0.586,
+        "environmental": 1.0,
+        "spatial": 0.0,
+        "temporal": 0.6
+      },
+      "evidence_count": 3,
+      "details": {
+        "visual": {
+          "available": true,
+          "quality": 0.5864,
+          "confidence": 58.64,
+          "status": "LOW",
+          "prediction": "Tomato_Bacterial_Spot",
+          "reason": "Visual model confidence is 58.6%."
+        },
+        "environmental": {
+          "available": true,
+          "status": "FRESH",
+          "quality": 1.0,
+          "usable": true,
+          "age_minutes": 0.01,
+          "reason": "Environmental evidence is available and usable.",
+          "usable_for_current_decision": true,
+          "evidence_scope": "CURRENT_CANDIDATE"
+        },
+        "spatial": {
+          "available": false,
+          "quality": 0.0,
+          "reason": "No spatial history is available."
+        },
+        "temporal": {
+          "available": true,
+          "quality": 0.6,
+          "trend": "CHANGING",
+          "delta": null,
+          "history_length": 4,
+          "reason": "Disease observations changed over time."
+        }
+      },
+      "adaptive": {
+        "action": "REQUEST_IMAGE",
+        "adaptive_action": "SECOND_IMAGE",
+        "priority": "HIGH",
+        "evidence_required": "SECOND_IMAGE",
+        "requested_evidence": [
+          "SECOND_IMAGE"
+        ],
+        "next_best_source": "SMARTPHONE",
+        "source": "SMARTPHONE",
+        "model": "CRAI_V3",
+        "decision_ready": false,
+        "visual_evidence_accepted": false,
+        "evidence_gap": "VISUAL_UNCERTAINTY",
+        "reason": "Visual confidence is below the CRAI operating threshold. Acquire another image before making a field assessment.",
+        "cost_aware_selection": {
+          "selected": {
+            "evidence": "SECOND_IMAGE",
+            "source": "SMARTPHONE",
+            "available": true,
+            "reliability": 0.9,
+            "information_value": 0.9,
+            "decision_impact": 0.95,
+            "acquisition_cost": 0.08,
+            "acquisition_time": 0.12,
+            "model": "CRAI_V3",
+            "reason": "A second field image directly reduces visual uncertainty at very low acquisition burden.",
+            "utility": 2.635
+          },
+          "ranked_candidates": [
+            {
+              "evidence": "SECOND_IMAGE",
+              "source": "SMARTPHONE",
+              "available": true,
+              "reliability": 0.9,
+              "information_value": 0.9,
+              "decision_impact": 0.95,
+              "acquisition_cost": 0.08,
+              "acquisition_time": 0.12,
+              "model": "CRAI_V3",
+              "reason": "A second field image directly reduces visual uncertainty at very low acquisition burden.",
+              "utility": 2.635
+            }
+          ],
+          "stopping_policy": {
+            "action": "CONTINUE",
+            "reason": "Additional evidence may materially improve the decision.",
+            "stop": false
+          },
+          "policy": {
+            "utility_formula": "information_value * decision_impact * reliability / (0.20 + 0.70*cost + 0.30*time)",
+            "cost_weight": 0.7,
+            "time_weight": 0.3,
+            "stop_utility_threshold": 0.2,
+            "ready_score_threshold": 0.8,
+            "max_acquisition_actions": 3,
+            "status": "ENGINEERING_POLICY_NOT_SCIENTIFICALLY_VALIDATED"
+          }
+        },
+        "accepted": false
+      },
+      "additional_evidence_required": true,
+      "requested_evidence": [
+        "SECOND_IMAGE"
+      ],
+      "decision_ready": false
+    },
+    "risk": null,
+    "decision": {
+      "ready": false,
+      "action": "COLLECT_ADDITIONAL_EVIDENCE",
+      "adaptive_action": "REQUEST_IMAGE",
+      "priority": "HIGH",
+      "title": "Additional field evidence required",
+      "reason": "Visual confidence is below the CRAI operating threshold. Acquire another image before making a field assessment.",
+      "requested_evidence": [
+        "SECOND_IMAGE"
+      ]
+    },
+    "sensor_request": null,
+    "adaptive_evidence": {
+      "action": "REQUEST_IMAGE",
+      "adaptive_action": "SECOND_IMAGE",
+      "priority": "HIGH",
+      "evidence_required": "SECOND_IMAGE",
+      "requested_evidence": [
+        "SECOND_IMAGE"
+      ],
+      "next_best_source": "SMARTPHONE",
+      "source": "SMARTPHONE",
+      "model": "CRAI_V3",
+      "decision_ready": false,
+      "visual_evidence_accepted": false,
+      "evidence_gap": "VISUAL_UNCERTAINTY",
+      "reason": "Visual confidence is below the CRAI operating threshold. Acquire another image before making a field assessment.",
+      "cost_aware_selection": {
+        "selected": {
+          "evidence": "SECOND_IMAGE",
+          "source": "SMARTPHONE",
+          "available": true,
+          "reliability": 0.9,
+          "information_value": 0.9,
+          "decision_impact": 0.95,
+          "acquisition_cost": 0.08,
+          "acquisition_time": 0.12,
+          "model": "CRAI_V3",
+          "reason": "A second field image directly reduces visual uncertainty at very low acquisition burden.",
+          "utility": 2.635
+        },
+        "ranked_candidates": [
+          {
+            "evidence": "SECOND_IMAGE",
+            "source": "SMARTPHONE",
+            "available": true,
+            "reliability": 0.9,
+            "information_value": 0.9,
+            "decision_impact": 0.95,
+            "acquisition_cost": 0.08,
+            "acquisition_time": 0.12,
+            "model": "CRAI_V3",
+            "reason": "A second field image directly reduces visual uncertainty at very low acquisition burden.",
+            "utility": 2.635
+          }
+        ],
+        "stopping_policy": {
+          "action": "CONTINUE",
+          "reason": "Additional evidence may materially improve the decision.",
+          "stop": false
+        },
+        "policy": {
+          "utility_formula": "information_value * decision_impact * reliability / (0.20 + 0.70*cost + 0.30*time)",
+          "cost_weight": 0.7,
+          "time_weight": 0.3,
+          "stop_utility_threshold": 0.2,
+          "ready_score_threshold": 0.8,
+          "max_acquisition_actions": 3,
+          "status": "ENGINEERING_POLICY_NOT_SCIENTIFICALLY_VALIDATED"
+        }
+      },
+      "accepted": false
+    },
+    "judge_intelligence": {
+      "version": "JUDGE_INTELLIGENCE_V1",
+      "why_sensor": {
+        "needed": false,
+        "trigger": null,
+        "reason": "No additional environmental evidence was required for the current decision.",
+        "engine_reason": "Visual confidence is below the CRAI operating threshold. Acquire another image before making a field assessment.",
+        "required_evidence": null,
+        "requested_evidence": [
+          "SECOND_IMAGE"
+        ],
+        "requested_source": null,
+        "policy": {
+          "freshness_limit_minutes": 15,
+          "rule": "Environmental evidence must be fresh within the CRAI decision policy."
+        },
+        "current_sensor": {
+          "available": true,
+          "freshness": "FRESH",
+          "age_minutes": 0.01,
+          "usable": null
+        },
+        "adaptive_action": "SECOND_IMAGE",
+        "decision_ready": false
+      },
+      "why_risk": {
+        "risk_score": null,
+        "risk_level": null,
+        "assessment_confidence": null,
+        "formula": {
+          "description": "CRAI combines available evidence sources using the deterministic FUSION_V1_5 weighting policy.",
+          "weights": {}
+        },
+        "contributions": [],
+        "total_contribution": 0,
+        "strongest_contributor": null,
+        "explanation": "No evidence contribution is available.",
+        "available_evidence": [],
+        "missing_evidence": [],
+        "evidence_summary": {}
+      },
+      "evidence_provenance": [
+        {
+          "type": "visual",
+          "source": "SMARTPHONE",
+          "value": "Tomato_Bacterial_Spot",
+          "confidence": 58.64,
+          "quality": 0.586,
+          "status": "AVAILABLE",
+          "used_in_decision": false
+        },
+        {
+          "type": "environmental",
+          "source": "CRAI-SIM-001",
+          "values": {
+            "soil_moisture": 53.19,
+            "temperature": 27.52,
+            "humidity": 61.65
+          },
+          "timestamp": "2026-09-27T12:37:11.728035+00:00",
+          "age_minutes": null,
+          "freshness": null,
+          "quality": 1.0,
+          "status": "AVAILABLE",
+          "used_in_decision": false
+        },
+        {
+          "type": "spatial",
+          "source": "FIELD_OBSERVATIONS",
+          "values": {
+            "infected_neighbors": null,
+            "total_observed_zones": null
+          },
+          "quality": 0.0,
+          "status": "MISSING",
+          "used_in_decision": false
+        },
+        {
+          "type": "temporal",
+          "source": "CRAI_FIELD_MEMORY",
+          "observation_count": 4,
+          "quality": 0.6,
+          "status": "AVAILABLE",
+          "used_in_decision": false
+        }
+      ],
+      "decision_trace": {
+        "stages": [
+          {
+            "stage": "EVIDENCE_EVALUATION",
+            "status": "COMPLETE",
+            "evidence_count": 3
+          },
+          {
+            "stage": "ADAPTIVE_EVIDENCE_GATE",
+            "status": "ADDITIONAL_EVIDENCE_REQUIRED",
+            "action": "REQUEST_IMAGE"
+          },
+          {
+            "stage": "FUSION_V1_5",
+            "status": "NOT_READY",
+            "risk_score": null,
+            "risk_level": null
+          },
+          {
+            "stage": "DETERMINISTIC_DECISION",
+            "status": "NOT_READY",
+            "action": "COLLECT_ADDITIONAL_EVIDENCE",
+            "priority": "HIGH"
+          }
+        ],
+        "authoritative_outputs": {
+          "risk_score": null,
+          "risk_level": null,
+          "assessment_confidence": null,
+          "decision_action": "COLLECT_ADDITIONAL_EVIDENCE",
+          "decision_priority": "HIGH"
+        }
+      },
+      "deterministic_source": "CRAI_FUSION_V1_5",
+      "llm_role": "EXPLANATION_ONLY"
+    },
+    "advisory": null,
+    "context": {
+      "crop": "Tomato",
+      "growth_stage": "Vegetative",
+      "observation_count": 5
+    }
+  }
+}

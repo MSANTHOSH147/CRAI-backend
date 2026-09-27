@@ -1,0 +1,44 @@
+[
+  {
+    "image_id": "IMG-B8EE535AAFAA4AB5",
+    "farm_id": "PHASE4B_DUP",
+    "zone_id": "A1",
+    "event_id": null,
+    "source": "PHONE",
+    "scale": "PLANT",
+    "phase": "BEFORE",
+    "capture_mode": "ROUTINE",
+    "timestamp": "2026-09-27T07:29:50.228537+00:00",
+    "latitude": 13.1,
+    "longitude": 80.2,
+    "altitude": null,
+    "sequence": 1,
+    "parent_observation_id": null,
+    "flight_id": null,
+    "observation_id": "IMG-B8EE535AAFAA4AB5",
+    "filename": "duplicate-test.jpg",
+    "stored_filename": "IMG-B8EE535AAFAA4AB5.jpg",
+    "mime_type": "image/jpeg",
+    "size_bytes": 5429,
+    "quality_score": 65.0,
+    "quality_status": "UNCERTAIN",
+    "quality": {
+      "quality_score": 65.0,
+      "quality_status": "UNCERTAIN",
+      "width": 640,
+      "height": 480,
+      "mean_brightness": 133.0,
+      "blur_variance": 0.0,
+      "reasons": [
+        "possible_blur"
+      ]
+    },
+    "visual_confidence": null,
+    "integrity": {
+      "algorithm": "SHA-256",
+      "sha256": "2e065edfc3cd8176ed8156e25e3f92da24973783d773bf3b3f3f1d627f7328c3"
+    },
+    "created_at": "2026-09-27T07:29:50.228579+00:00",
+    "api_file_url": "/api/visual-evidence/IMG-B8EE535AAFAA4AB5/file"
+  }
+]

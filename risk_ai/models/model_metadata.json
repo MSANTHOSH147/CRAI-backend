@@ -1,0 +1,10 @@
+﻿{
+    "model_name": "GradientBoosting",
+    "version": "v1",
+    "training_dataset_size": 10000,
+    "metrics": {
+        "test_rmse": 4.49,
+        "test_r2": 0.9706
+    },
+    "disclaimer": "Risk model training uses synthetic prototype data because a real labelled field-risk dataset is not yet available."
+}

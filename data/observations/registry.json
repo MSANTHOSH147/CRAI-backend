@@ -1,0 +1,38 @@
+{
+  "OBS-UAV-DEMO": {
+    "observation_id": "OBS-UAV-DEMO",
+    "farm_id": "1",
+    "zone_id": "A1",
+    "timestamp": "2026-09-27T07:29:49.835397",
+    "source": "UAV",
+    "scale": "FIELD",
+    "capture_mode": "FIELD_SCAN",
+    "latitude": 13.1,
+    "longitude": 80.2,
+    "event_id": null,
+    "parent_observation_id": null,
+    "status": "PENDING",
+    "visual_evidence_ids": [],
+    "sensor_evidence_ids": [],
+    "created_at": "2026-09-27T07:29:49.835415",
+    "updated_at": "2026-09-27T07:29:49.835420"
+  },
+  "OBS-PHONE-DEMO": {
+    "observation_id": "OBS-PHONE-DEMO",
+    "farm_id": "1",
+    "zone_id": "A1",
+    "timestamp": "2026-09-27T07:29:49.840781",
+    "source": "PHONE",
+    "scale": "PLANT",
+    "capture_mode": "TARGETED_INSPECTION",
+    "latitude": 13.1,
+    "longitude": 80.2,
+    "event_id": null,
+    "parent_observation_id": "OBS-UAV-DEMO",
+    "status": "PENDING",
+    "visual_evidence_ids": [],
+    "sensor_evidence_ids": [],
+    "created_at": "2026-09-27T07:29:49.840804",
+    "updated_at": "2026-09-27T07:29:49.840813"
+  }
+}

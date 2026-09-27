@@ -1,0 +1,92 @@
+{
+  "experiment": "CRAI_ADAPTIVE_EVIDENCE_V1",
+  "benchmark": "C:\\Users\\91807\\Downloads\\CRAI_project_structure\\CRAI\\backend\\research\\crai_tomato_benchmark_v1\\per_image_predictions.csv",
+  "observations": 71,
+  "baseline_accuracy": 0.5915492957746479,
+  "thresholds": [
+    0.5,
+    0.6,
+    0.7,
+    0.8,
+    0.9
+  ],
+  "results": [
+    {
+      "threshold": 0.5,
+      "total_observations": 71,
+      "accepted_observations": 39,
+      "additional_evidence_requests": 32,
+      "coverage": 0.5492957746478874,
+      "evidence_request_rate": 0.4507042253521127,
+      "accepted_correct": 30,
+      "accepted_wrong": 9,
+      "selective_accuracy": 0.7692307692307693,
+      "selective_error_rate": 0.23076923076923078,
+      "rejected_correct": 12,
+      "rejected_wrong": 20,
+      "high_confidence_wrong_accepted": 9
+    },
+    {
+      "threshold": 0.6,
+      "total_observations": 71,
+      "accepted_observations": 29,
+      "additional_evidence_requests": 42,
+      "coverage": 0.4084507042253521,
+      "evidence_request_rate": 0.5915492957746479,
+      "accepted_correct": 24,
+      "accepted_wrong": 5,
+      "selective_accuracy": 0.8275862068965517,
+      "selective_error_rate": 0.1724137931034483,
+      "rejected_correct": 18,
+      "rejected_wrong": 24,
+      "high_confidence_wrong_accepted": 5
+    },
+    {
+      "threshold": 0.7,
+      "total_observations": 71,
+      "accepted_observations": 20,
+      "additional_evidence_requests": 51,
+      "coverage": 0.28169014084507044,
+      "evidence_request_rate": 0.7183098591549296,
+      "accepted_correct": 16,
+      "accepted_wrong": 4,
+      "selective_accuracy": 0.8,
+      "selective_error_rate": 0.2,
+      "rejected_correct": 26,
+      "rejected_wrong": 25,
+      "high_confidence_wrong_accepted": 4
+    },
+    {
+      "threshold": 0.8,
+      "total_observations": 71,
+      "accepted_observations": 13,
+      "additional_evidence_requests": 58,
+      "coverage": 0.18309859154929578,
+      "evidence_request_rate": 0.8169014084507042,
+      "accepted_correct": 12,
+      "accepted_wrong": 1,
+      "selective_accuracy": 0.9230769230769231,
+      "selective_error_rate": 0.07692307692307693,
+      "rejected_correct": 30,
+      "rejected_wrong": 28,
+      "high_confidence_wrong_accepted": 1
+    },
+    {
+      "threshold": 0.9,
+      "total_observations": 71,
+      "accepted_observations": 8,
+      "additional_evidence_requests": 63,
+      "coverage": 0.11267605633802817,
+      "evidence_request_rate": 0.8873239436619719,
+      "accepted_correct": 8,
+      "accepted_wrong": 0,
+      "selective_accuracy": 1.0,
+      "selective_error_rate": 0.0,
+      "rejected_correct": 34,
+      "rejected_wrong": 29,
+      "high_confidence_wrong_accepted": 0
+    }
+  ],
+  "target_selective_accuracy": 0.8,
+  "interpretation": "Confidence-aware escalation was evaluated as a selective prediction policy. Rejected observations are assumed to require additional evidence; no corrective benefit from that evidence is assumed."
+}

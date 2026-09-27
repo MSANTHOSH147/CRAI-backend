@@ -1,0 +1,201 @@
+from app.api.crai_e2e import router as crai_e2e_router
+from app.api.advisory_chat import router as advisory_chat_router
+from app.api.observations import router as observations_router
+from app.api.visual_evidence import router as visual_evidence_router
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from app.api.supabase import router as supabase_router
+from app.api.routes import router
+from app.api.farm_events import router as farm_intelligence_router
+from app.database import Base, engine
+from sqlalchemy import inspect, text
+from app.models.sensor_request import SensorAcquisitionRequest
+from app.models.pending_analysis import PendingFieldAnalysis
+from app.models.field_sensor import FieldSensorReading
+from app.api.supabase_sync import router as supabase_sync_router
+from app.models.observation import FieldObservation
+from app.models.farm_event import FarmEvent
+from app.api.supabase_storage import (
+    router as supabase_storage_router,
+)
+# ------------------------------------------------------------
+# SQLAlchemy model registration
+# ------------------------------------------------------------
+
+from app.models.farm import Farm
+from app.models.sensor import SensorData
+from app.models.field_sensor import FieldSensorReading
+from app.models.observation import FieldObservation
+
+# ------------------------------------------------------------
+# Legacy Risk AI
+# ------------------------------------------------------------
+
+from app.services.risk_service import (
+    predict_risk,
+    get_model_info,
+)
+
+def _apply_safe_sqlite_migrations():
+    """Apply additive columns needed by the current CRAI pipeline.
+
+    The project uses SQLite and create_all() does not alter existing tables.
+    These migrations are intentionally additive and safe to run repeatedly.
+    """
+    if engine.dialect.name != "sqlite":
+        return
+
+    inspector = inspect(engine)
+
+    with engine.begin() as connection:
+        pending_columns = {
+            column["name"]
+            for column in inspector.get_columns("pending_field_analyses")
+        } if "pending_field_analyses" in inspector.get_table_names() else set()
+
+        if "advisory_language" not in pending_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE pending_field_analyses "
+                    "ADD COLUMN advisory_language VARCHAR(20) "
+                    "NOT NULL DEFAULT 'English'"
+                )
+            )
+
+        # Additive migrations for production-capable field sensor metadata.
+        # Existing installations may already have field_sensor_readings.
+        sensor_columns = {
+            column["name"]
+            for column in inspector.get_columns("field_sensor_readings")
+        } if "field_sensor_readings" in inspector.get_table_names() else set()
+
+        additive_columns = {
+            "soil_temperature": "FLOAT",
+            "soil_ph": "FLOAT",
+            "soil_ec": "FLOAT",
+            "leaf_wetness": "FLOAT",
+            "latitude": "FLOAT",
+            "longitude": "FLOAT",
+            "altitude": "FLOAT",
+            "battery": "FLOAT",
+            "signal_strength": "FLOAT",
+            "gateway_id": "VARCHAR(100)",
+            "sequence_number": "INTEGER",
+        }
+
+        for column_name, column_type in additive_columns.items():
+            if column_name not in sensor_columns:
+                connection.execute(
+                    text(
+                        f"ALTER TABLE field_sensor_readings "
+                        f"ADD COLUMN {column_name} {column_type}"
+                    )
+                )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    _apply_safe_sqlite_migrations()
+    yield
+
+
+app = FastAPI(
+    title="CRAI API",
+    description="Crop Assisted AI - Agricultural Monitoring System",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class RiskAnalysisRequest(BaseModel):
+    crop: str = "Tomato"
+    disease: str = "Tomato_Healthy"
+    disease_confidence: float = 0.0
+
+    temperature: float = 0.0
+    humidity: float = 0.0
+    thermal_anomaly: float = 0.0
+
+    infected_neighbor_count: int = 0
+    total_neighbor_count: int = 0
+
+    disease_density: float = 0.0
+    cluster_density: float = 0.0
+
+    observation_count: int = 1
+
+    growth_stage: str = "Vegetative"
+
+
+app.include_router(router)
+app.include_router(crai_e2e_router)
+app.include_router(advisory_chat_router)
+app.include_router(farm_intelligence_router)
+app.include_router(supabase_router)
+app.include_router(supabase_sync_router)
+app.include_router(
+    supabase_storage_router
+)
+@app.get("/")
+def root():
+    return {
+        "message": "CRAI API is running",
+        "project": "Crop Assisted AI",
+        "version": "0.1.0",
+    }
+
+
+@app.get("/api/health")
+def health_check():
+    return {
+        "status": "healthy",
+        "service": "CRAI backend",
+    }
+@app.post("/api/risk/analyze")
+def analyze_risk(request: RiskAnalysisRequest):
+
+    try:
+        result = predict_risk(
+            request.model_dump()
+        )
+
+        return result
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Risk AI prediction failed: {exc}",
+        )
+
+
+@app.get("/api/risk/status")
+def risk_status():
+
+    try:
+        return get_model_info()
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Risk AI unavailable: {exc}",
+        )
+
+app.include_router(visual_evidence_router)
+
+
+
+app.include_router(observations_router)
+
+
+
